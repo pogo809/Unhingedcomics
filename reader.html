@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Comic Reader</title>
+<style>
+body{margin:0;background:#09090c;color:#fff;font-family:Arial,sans-serif}
+.reader-bar{position:sticky;top:0;z-index:5;display:flex;align-items:center;justify-content:space-between;padding:14px 18px;background:rgba(9,9,12,.92);backdrop-filter:blur(12px)}
+.reader-bar a{color:#fff;text-decoration:none}.reader-bar button{background:#ff3d71;border:0;color:#fff;padding:9px 14px;border-radius:8px;cursor:pointer}
+.pdf{height:calc(100vh - 60px);width:100%;border:0}
+.note{padding:20px;text-align:center;color:#aaa}
+</style>
+</head>
+<body>
+<div class="reader-bar">
+<a href="index.html">← Home</a>
+<strong id="chapterTitle">Chapter</strong>
+<button id="fullscreen">Fullscreen</button>
+</div>
+<iframe id="pdf" class="pdf" title="Comic PDF"></iframe>
+<p class="note">If the PDF does not display on your phone, use the browser's PDF/download option.</p>
+<script>
+const params=new URLSearchParams(location.search);
+const comic=params.get("comic")||"pashanandan";
+const chapter=params.get("chapter")||"01";
+const pdf=`comics/${comic}/chapter-${chapter}.pdf`;
+document.getElementById("pdf").src=pdf;
+document.getElementById("chapterTitle").textContent=`Chapter ${chapter}`;
+document.getElementById("fullscreen").onclick=()=>{
+  document.documentElement.requestFullscreen?.();
+};
+</script>
+</body>
+</html>
