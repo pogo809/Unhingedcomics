@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Comic Reader</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .reader-page {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 20px 12px 100px;
+    }
+    .reader-top {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      padding: 10px 0;
+      backdrop-filter: blur(12px);
+      background: rgba(0,0,0,.12);
+    }
+    .reader-controls {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .reader-controls button, .reader-controls a {
+      border: 0;
+      border-radius: 10px;
+      padding: 9px 13px;
+      cursor: pointer;
+      text-decoration: none;
+      font: inherit;
+    }
+    #pages {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+      margin-top: 15px;
+    }
+    #pages img {
+      display: block;
+      width: min(100%, 900px);
+      height: auto;
+      margin: 0 auto;
+    }
+    #status {
+      text-align: center;
+      padding: 12px;
+      opacity: .8;
+    }
+    #error {
+      display: none;
+      text-align: center;
+      padding: 30px 15px;
+    }
+  </style>
+</head>
+<body>
+  <main class="reader-page">
+    <div class="reader-top">
+      <div class="reader-controls">
+        <a href="index.html">← Back</a>
+        <strong id="title">Loading...</strong>
+        <div>
+          <button id="prev">Previous</button>
+          <button id="next">Next</button>
+          <button id="fullscreen">Fullscreen</button>
+        </div>
+      </div>
+      <div id="status">Loading pages...</div>
+    </div>
+
+    <div id="pages"></div>
+    <div id="error"></div>
+  </main>
+
+<script>
+(function () {
+  const OWNER = "pogo809";
+  const REPO = "Unhingedcomics";
+  const BRANCH = "main";
+  const API = "https://api.github.com/repos/" + OWNER + "/" + REPO + "/contents/";
+  const RAW = "https://raw.githubusercontent.com/" + OWNER + "/" + REPO + "/" + BRANCH + "/";
+
+  const params = new URLSearchParams(location.search);
+  const comic = params.get("comic");
+  const chapter = params.get("chapter");
+  const requestedPage = Math.max(1, parseInt(params.get("page") || "1", 10) || 1);
+
+  const pagesEl = document.getElementById("pages");
+  const statusEl = document.getElementById("status");
+  const titleEl = document.getElementById("title");
+  const errorEl = document.getElementById("error");
+  const prevBtn = document.getElementById("prev");
+  const nextBtn = document.getElementById("next");
+  const fullscreenBtn = document.getElementById("fullscreen");
+
+  let pages = [];
+  let currentPage = requestedPage;
+
+  function showError(message) {
+    errorEl.style.display = "block";
+    errorEl.textContent = message;
+    statusEl.textContent = "";
+  }
+
+  function setStatus() {
+    statusEl.textContent = pages.length
+      ? "Page " + currentPage + " of " + pages.length
+      : "";
+    prevBtn.disabled = currentPage <= 1;
+    nextBtn.disabled = currentPage >= pages.length;
+  }
+
+  function saveProgress() {
+    if (!comic || !chapter || !pages.length) return;
+    localStorage.setItem("unhinged_progress", JSON.stringify({
+      comic: comic,
+      chapter: chapter,
+      page: currentPage,
+      image: pages[currentPage - 1]
+    }));
+  }
+
+  function goToPage(n) {
+    if (!pages.length) return;
+    currentPage = Math.max(1, Math.min(pages.length, n));
+    const img = pagesEl.querySelector('[data-page="' + currentPage + '"]');
+    if (img) img.scrollIntoView({ behavior: "smooth", block: "start" });
+    setStatus();
+    saveProgress();
+    history.replaceState(null, "", "reader.html?comic=" +
+      encodeURIComponent(comic) + "&chapter=" +
+      encodeURIComponent(chapter) + "&page=" + currentPage);
+  }
+
+  function sortPages(items) {
+    return items
+      .filter(x => x && x.type === "file")
+      .filter(x => /\.(webp|jpg|jpeg|png)$/i.test(x.name))
+      .sort((a, b) => {
+        const an = parseInt((a.name.match(/\d+/) || ["0"])[0], 10);
+        const bn = parseInt((b.name.match(/\d+/) || ["0"])[0], 10);
+        return an - bn || a.name.localeCompare(b.name);
+      });
+  }
+
+  async function load() {
+    if (!comic || !chapter) {
+      showError("This reader link is missing the comic or chapter.");
+      return;
+    }
+
+    titleEl.textContent = comic.replace(/[-_]+/g, " ") +
+      " — " + chapter.replace(/[-_]+/g, " ");
+
+    const path = "comics/" + comic + "/" + chapter;
+
+    try {
+      const response = await fetch(API + path, {
+        headers: { "Accept": "application/vnd.github+json" },
+        cache: "no-store"
+      });
+
+      if (!response.ok) {
+        throw new Error("GitHub returned " + response.status);
+      }
+
+      const data = await response.json();
+      pages = sortPages(Array.isArray(data) ? data : []);
+
+      if (!pages.length) {
+        showError("No comic pages were found in this chapter.");
+        return;
+      }
+
+      pagesEl.innerHTML = "";
+
+      pages.forEach((file, index) => {
+        const pageNo = index + 1;
+        const img = document.createElement("img");
+        img.dataset.page = pageNo;
+        img.alt = "Page " + pageNo;
+        img.loading = pageNo <= 2 ? "eager" : "lazy";
+        img.src = RAW + path + "/" + encodeURIComponent(file.name);
+        img.addEventListener("error", function () {
+          img.alt = "Page " + pageNo + " could not be loaded";
+        });
+        pagesEl.appendChild(img);
+      });
+
+      currentPage = Math.min(requestedPage, pages.length);
+      setStatus();
+      saveProgress();
+
+      const observer = new IntersectionObserver(entries => {
+        let best = null;
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            if (!best || entry.intersectionRatio > best.intersectionRatio) best = entry;
+          }
+        }
+        if (best) {
+          currentPage = Number(best.target.dataset.page);
+          setStatus();
+          saveProgress();
+        }
+      }, { threshold: [0.25, 0.5, 0.75] });
+
+      pagesEl.querySelectorAll("img").forEach(img => observer.observe(img));
+
+      setTimeout(() => {
+        const target = pagesEl.querySelector('[data-page="' + currentPage + '"]');
+        if (target) target.scrollIntoView({ block: "start" });
+      }, 250);
+
+    } catch (err) {
+      showError("Could not load the comic. Check that the comic and chapter folders exist and that GitHub Pages is serving the site.");
+      console.error(err);
+    }
+  }
+
+  prevBtn.addEventListener("click", () => goToPage(currentPage - 1));
+  nextBtn.addEventListener("click", () => goToPage(currentPage + 1));
+
+  fullscreenBtn.addEventListener("click", () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen?.();
+    } else {
+      document.exitFullscreen?.();
+    }
+  });
+
+  document.addEventListener("keydown", e => {
+    if (e.key === "ArrowLeft") goToPage(currentPage - 1);
+    if (e.key === "ArrowRight") goToPage(currentPage + 1);
+  });
+
+  load();
+})();
+</script>
+</body>
+</html>
