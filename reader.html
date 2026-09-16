@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Comic Reader</title>
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:#0b0b0f;color:#fff;font-family:Arial,sans-serif}
+body{padding-bottom:70px}
+.topbar{position:sticky;top:0;z-index:10;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;background:rgba(11,11,15,.94);border-bottom:1px solid #292932;backdrop-filter:blur(10px)}
+.title{font-weight:800;font-size:16px}
+.progress{font-size:13px;color:#aaa}
+.reader{max-width:900px;margin:0 auto}
+.page{display:block;width:100%;height:auto;margin:0 auto;background:#15151b;user-select:none;-webkit-user-drag:none}
+.controls{position:fixed;left:50%;bottom:12px;transform:translateX(-50%);display:flex;gap:8px;align-items:center;background:rgba(20,20,27,.94);border:1px solid #33333d;border-radius:999px;padding:8px;z-index:20;box-shadow:0 8px 30px rgba(0,0,0,.45)}
+button{border:0;border-radius:999px;padding:9px 14px;background:#292934;color:white;font-weight:700;cursor:pointer}
+button:disabled{opacity:.4;cursor:default}
+#fullscreen{font-size:16px;padding:9px 12px}
+.loading{text-align:center;padding:50px 20px;color:#aaa}
+@media (min-width:901px){.page{margin-bottom:2px}}
+</style>
+</head>
+<body>
+<div class="topbar">
+<div class="title" id="title">Loading comic…</div>
+<div class="progress" id="progress">Page 1 / …</div>
+</div>
+<main class="reader" id="reader"><div class="loading" id="loading">Loading comic…</div></main>
+<div class="controls">
+<button id="prev" aria-label="Previous page">←</button>
+<button id="next" aria-label="Next page">→</button>
+<button id="fullscreen" aria-label="Fullscreen">⛶</button>
+</div>
+<script>
+const OWNER="pogo809",REPO="Unhingedcomics",BRANCH="main";
+const API=`https://api.github.com/repos/${OWNER}/${REPO}/contents/`;
+const RAW=`https://raw.githubusercontent.com/${OWNER}/${REPO}/${BRANCH}/`;
+const params=new URLSearchParams(location.search);
+const comic=params.get("comic"),chapter=params.get("chapter");
+let current=Math.max(1,parseInt(params.get("page")||"1",10)||1);
+let pages=[];
+
+const reader=document.getElementById("reader");
+const loading=document.getElementById("loading");
+const progress=document.getElementById("progress");
+const title=document.getElementById("title");
+
+function saveProgress(){
+ if(!comic||!chapter||!pages.length)return;
+ localStorage.setItem("uc-progress",JSON.stringify({
+  comic,chapter,page:current,total:pages.length,image:pages[current-1]?.name||""
+ }));
+}
+
+function currentPage(){
+ let best=1,bestDistance=Infinity;
+ pages.forEach((page,i)=>{
+  const d=Math.abs(page.getBoundingClientRect().top-80);
+  if(d<bestDistance){bestDistance=d;best=i+1}
+ });
+ return best;
+}
+
+function update(){
+ current=currentPage();
+ progress.textContent=`Page ${current} / ${pages.length}`;
+ document.getElementById("prev").disabled=current<=1;
+ document.getElementById("next").disabled=current>=pages.length;
+ saveProgress();
+}
+
+function goTo(n){
+ const p=Math.max(1,Math.min(pages.length,n));
+ pages[p-1]?.scrollIntoView({behavior:"smooth",block:"start"});
+}
+
+async function load(){
+ if(!comic||!chapter){
+  loading.textContent="Missing comic or chapter.";
+  return;
+ }
+ title.textContent=`${comic.replace(/[-_]+/g," ")} — ${chapter.replace(/[-_]+/g," ")}`;
+ const path=`comics/${comic}/${chapter}`;
+
+ try{
+  const response=await fetch(API+path,{headers:{"Accept":"application/vnd.github+json"},cache:"no-store"});
+  if(!response.ok)throw new Error("GitHub API "+response.status);
+  const data=await response.json();
+
+  pages=data.filter(x=>x.type==="file"&&/\.(webp|jpg|jpeg|png)$/i.test(x.name))
+   .sort((a,b)=>{
+    const na=parseInt((a.name.match(/\d+/)||["0"])[0],10);
+    const nb=parseInt((b.name.match(/\d+/)||["0"])[0],10);
+    return na-nb||a.name.localeCompare(b.name);
+   });
+
+  if(!pages.length){loading.textContent="No comic pages found.";return}
+
+  pages.forEach((file,i)=>{
+   const img=document.createElement("img");
+   img.className="page";
+   img.dataset.page=i+1;
+   img.alt=`${comic} ${chapter} — Page ${i+1}`;
+   img.loading=i<2?"eager":"lazy";
+   img.decoding="async";
+   img.src=RAW+path+"/"+encodeURIComponent(file.name);
+   reader.appendChild(img);
+  });
+  loading.remove();
+
+  current=Math.min(current,pages.length);
+  const observer=new IntersectionObserver(entries=>{
+   const visible=entries.filter(e=>e.isIntersecting)
+     .sort((a,b)=>b.intersectionRatio-a.intersectionRatio)[0];
+   if(visible){
+    current=Number(visible.target.dataset.page);
+    progress.textContent=`Page ${current} / ${pages.length}`;
+    saveProgress();
+   }
+  },{threshold:[.25,.5,.75]});
+  pages=Array.from(document.querySelectorAll(".page"));
+  pages.forEach(p=>observer.observe(p));
+
+  document.getElementById("prev").disabled=current<=1;
+  document.getElementById("next").disabled=current>=pages.length;
+  progress.textContent=`Page ${current} / ${pages.length}`;
+  saveProgress();
+
+  setTimeout(()=>pages[current-1]?.scrollIntoView({block:"start"}),200);
+ }catch(e){
+  console.error(e);
+  loading.textContent="Could not load this comic. Please check the comic and chapter folders.";
+ }
+}
+
+document.getElementById("prev").onclick=()=>goTo(currentPage()-1);
+document.getElementById("next").onclick=()=>goTo(currentPage()+1);
+document.getElementById("fullscreen").onclick=async()=>{
+ if(!document.fullscreenElement)await document.documentElement.requestFullscreen?.();
+ else await document.exitFullscreen?.();
+};
+window.addEventListener("scroll",update,{passive:true});
+document.addEventListener("keydown",e=>{
+ if(e.key==="ArrowLeft")goTo(currentPage()-1);
+ if(e.key==="ArrowRight")goTo(currentPage()+1);
+});
+load();
+</script>
+</body>
+</html>
